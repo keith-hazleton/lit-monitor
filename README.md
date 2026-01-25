@@ -260,6 +260,10 @@ For Gmail, use an [App Password](https://support.google.com/accounts/answer/1858
 ### Flask UI shows blank page
 Use `http://127.0.0.1:5000` instead of `http://localhost:5000` (IPv4 vs IPv6 issue).
 
+## Contributing
+
+This is a personal project shared publicly in case others find it useful. I make no guarantees about functionality or ongoing maintenance. Feedback is welcome, but I can't promise timely responses. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
 ## License
 
 MIT License - feel free to fork and adapt for your research needs.
