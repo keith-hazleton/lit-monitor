@@ -746,10 +746,10 @@ def save_to_capacities_daily_note(
             timeout=30,
         )
 
+        print(f"Capacities API response: {response.status_code} - {response.text}")
         if response.status_code == 200:
             return True
         else:
-            print(f"Capacities API error: {response.status_code} - {response.text}")
             return False
 
     except Exception as e:
@@ -765,7 +765,7 @@ def generate_and_save_digest(
     output_dir: str = "output",
     send_email: bool = False,
     to_email: Optional[str] = None,
-    save_to_capacities: bool = True,
+    save_to_capacities: bool = False,
 ) -> Path:
     """
     Generate a digest from recent ranked papers and save/send it.

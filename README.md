@@ -9,7 +9,7 @@ An automated literature monitoring tool for researchers. Scans PubMed and bioRxi
 - **Smart Summaries**: Each paper gets a plain-language summary and relevance rationale
 - **Email Digest**: HTML email with papers organized by priority (high/moderate/low)
 - **One-Click Zotero**: Signed links to add papers directly to your Zotero library
-- **Capacities Integration**: Sync papers and digests to your Capacities workspace
+- **Capacities Integration**: Save papers to your Capacities workspace via the Cloudflare Worker
 - **Web UI**: Flask-based interface for editing search queries and settings
 - **GitHub Actions**: Fully automated weekly runs with no server required
 
