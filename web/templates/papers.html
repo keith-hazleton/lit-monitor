@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Literature Monitor - Papers</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">Config</a>
+            <a href="/papers" class="nav-link active">Papers</a>
+            <a href="/seeds" class="nav-link">Seeds</a>
+            <a href="/suggestions" class="nav-link">Suggestions</a>
+        </nav>
+
+        <header>
+            <h1>Literature Monitor</h1>
+            <p class="subtitle">Paper Feedback</p>
+        </header>
+
+        <!-- Feedback Stats -->
+        <div class="stats-banner">
+            <div class="stat">
+                <span class="stat-value">{{ stats.starred }}</span>
+                <span class="stat-label">Starred</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">{{ stats.dismissed }}</span>
+                <span class="stat-label">Dismissed</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">{{ stats.neutral }}</span>
+                <span class="stat-label">No Feedback</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">{{ stats.seeds }}</span>
+                <span class="stat-label">Seeds</span>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filter-bar">
+            <select id="filter-feedback" onchange="applyFilters()">
+                <option value="all" {% if filter == 'all' %}selected{% endif %}>All Papers</option>
+                <option value="starred" {% if filter == 'starred' %}selected{% endif %}>Starred Only</option>
+                <option value="dismissed" {% if filter == 'dismissed' %}selected{% endif %}>Dismissed Only</option>
+                <option value="none" {% if filter == 'none' %}selected{% endif %}>No Feedback</option>
+            </select>
+            <select id="filter-days" onchange="applyFilters()">
+                <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 days</option>
+                <option value="14" {% if days == 14 %}selected{% endif %}>Last 14 days</option>
+                <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 days</option>
+                <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
+            </select>
+        </div>
+
+        <p class="paper-count">Showing {{ papers|length }} papers</p>
+
+        {% if papers %}
+            {% for paper in papers %}
+            <div class="paper-card {% if paper._user_feedback == 'star' %}starred{% elif paper._user_feedback == 'dismiss' %}dismissed{% elif paper.relevance_score is not none and paper.relevance_score >= 0.7 %}high-priority{% elif paper.relevance_score is not none and paper.relevance_score >= 0.4 %}moderate-priority{% endif %}"
+                 id="paper-{{ paper.id }}" data-paper-id="{{ paper.id }}">
+                <div class="paper-title">
+                    {% if paper.relevance_score is not none %}
+                    <span class="score-pill {% if paper.relevance_score >= 0.7 %}high{% elif paper.relevance_score >= 0.4 %}moderate{% else %}low{% endif %}">
+                        {{ "%.0f"|format(paper.relevance_score * 100) }}%
+                    </span>
+                    {% endif %}
+                    <a href="{{ paper.url }}" target="_blank">{{ paper.title }}</a>
+                    {% if paper._is_seed %}<span class="seed-badge">SEED</span>{% endif %}
+                </div>
+                <div class="paper-meta">
+                    {{ paper.authors[:3]|join(', ') }}{% if paper.authors|length > 3 %} et al.{% endif %}<br>
+                    <span class="journal">{{ paper.journal }}</span> &middot; {{ paper.pub_date }}
+                </div>
+                {% if paper.summary %}
+                <div class="paper-summary">{{ paper.summary }}</div>
+                {% endif %}
+                {% if paper.ranking_rationale %}
+                <div class="paper-rationale">{{ paper.ranking_rationale }}</div>
+                {% endif %}
+                {% if paper.matched_projects %}
+                <div class="paper-projects">
+                    {% for project in paper.matched_projects %}
+                    <span class="project-badge">{{ project }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <div class="feedback-buttons">
+                    <button class="feedback-btn star-btn {% if paper._user_feedback == 'star' %}active{% endif %}"
+                            onclick="setFeedback('{{ paper.id }}', 'star', this)">
+                        Star
+                    </button>
+                    <button class="feedback-btn dismiss-btn {% if paper._user_feedback == 'dismiss' %}active{% endif %}"
+                            onclick="setFeedback('{{ paper.id }}', 'dismiss', this)">
+                        Dismiss
+                    </button>
+                    {% if paper._user_feedback %}
+                    <span class="feedback-status" id="status-{{ paper.id }}">
+                        {{ paper._user_feedback }}ed
+                    </span>
+                    {% else %}
+                    <span class="feedback-status" id="status-{{ paper.id }}"></span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <p>No papers found matching your filters.</p>
+                <p>Run a search first with <code>python main.py</code></p>
+            </div>
+        {% endif %}
+
+        <footer>
+            <p>Star papers you find valuable, dismiss ones that aren't relevant.</p>
+            <p>Feedback improves future ranking accuracy.</p>
+        </footer>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        async function setFeedback(paperId, feedback, btn) {
+            const card = document.getElementById('paper-' + paperId);
+            const starBtn = card.querySelector('.star-btn');
+            const dismissBtn = card.querySelector('.dismiss-btn');
+            const statusEl = document.getElementById('status-' + paperId);
+
+            // Toggle: if already active, clear feedback
+            const isActive = btn.classList.contains('active');
+            const newFeedback = isActive ? null : feedback;
+
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paper_id: paperId, feedback: newFeedback })
+                });
+                const result = await response.json();
+
+                if (result.status === 'ok') {
+                    // Update UI
+                    starBtn.classList.remove('active');
+                    dismissBtn.classList.remove('active');
+                    card.classList.remove('starred', 'dismissed');
+
+                    if (newFeedback === 'star') {
+                        starBtn.classList.add('active');
+                        card.classList.add('starred');
+                        statusEl.textContent = 'starred';
+                    } else if (newFeedback === 'dismiss') {
+                        dismissBtn.classList.add('active');
+                        card.classList.add('dismissed');
+                        statusEl.textContent = 'dismissed';
+                    } else {
+                        statusEl.textContent = '';
+                    }
+
+                    showToast(newFeedback ? `Paper ${newFeedback}ed` : 'Feedback cleared');
+                } else {
+                    showToast(result.message || 'Error saving feedback', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        function applyFilters() {
+            const feedback = document.getElementById('filter-feedback').value;
+            const days = document.getElementById('filter-days').value;
+            window.location.href = `/papers?filter=${feedback}&days=${days}`;
+        }
+    </script>
+</body>
+</html>

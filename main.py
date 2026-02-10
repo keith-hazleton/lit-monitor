@@ -398,6 +398,33 @@ def main():
         default="output",
         help="Directory for digest output (default: output/)",
     )
+    parser.add_argument(
+        "--add-seed",
+        type=str,
+        metavar="DOI_OR_PMID",
+        help="Add a seed paper by DOI or PMID",
+    )
+    parser.add_argument(
+        "--suggest-config",
+        action="store_true",
+        help="Generate config suggestions based on feedback",
+    )
+    parser.add_argument(
+        "--sync-zotero",
+        action="store_true",
+        help="Sync Zotero library as seed papers",
+    )
+    parser.add_argument(
+        "--zotero-tag",
+        type=str,
+        default=None,
+        help="Only sync Zotero items with this tag (use with --sync-zotero)",
+    )
+    parser.add_argument(
+        "--sync-feedback",
+        action="store_true",
+        help="Sync feedback from Cloudflare Worker",
+    )
 
     args = parser.parse_args()
 
@@ -414,6 +441,57 @@ def main():
     # Stats mode
     if args.stats:
         show_stats(db)
+        return
+
+    # Add seed paper mode
+    if args.add_seed:
+        from src.paper_lookup import lookup_paper
+        print(f"Looking up: {args.add_seed}")
+        paper, source = lookup_paper(args.add_seed)
+        if paper:
+            is_new = db.insert_seed_paper(paper, source=source)
+            print(f"{'Added' if is_new else 'Updated'} seed paper: {paper.title}")
+            print(f"  Source: {source}")
+            print(f"  Authors: {', '.join(paper.authors[:3])}{'...' if len(paper.authors) > 3 else ''}")
+            print(f"  Journal: {paper.journal}")
+            if paper.doi:
+                print(f"  DOI: {paper.doi}")
+        else:
+            print(f"Could not find paper for: {args.add_seed}")
+            sys.exit(1)
+        return
+
+    # Sync feedback from Worker
+    if args.sync_feedback:
+        from src.feedback import sync_worker_feedback
+        count = sync_worker_feedback(db)
+        print(f"Synced {count} feedback entries from Worker")
+        return
+
+    # Suggest config
+    if args.suggest_config:
+        config = load_config(args.config)
+        from src.config_suggester import generate_suggestions
+        suggestions = generate_suggestions(config, db)
+        if suggestions:
+            print(f"\nGenerated {len(suggestions)} suggestions:")
+            for s in suggestions:
+                print(f"  [{s['suggestion_type']}] {s['suggestion_text']}")
+                print(f"    Rationale: {s['rationale']}")
+        else:
+            print("No suggestions generated (need at least 5 starred papers).")
+        return
+
+    # Sync Zotero library
+    if args.sync_zotero:
+        from src.zotero_sync import sync_zotero_library
+        zotero_key = os.getenv("ZOTERO_API_KEY")
+        zotero_user = os.getenv("ZOTERO_USER_ID")
+        if not zotero_key or not zotero_user:
+            print("Error: ZOTERO_API_KEY and ZOTERO_USER_ID must be set in .env")
+            sys.exit(1)
+        count = sync_zotero_library(zotero_key, zotero_user, db, tag_filter=args.zotero_tag)
+        print(f"Synced {count} papers from Zotero as seeds")
         return
 
     # Load config
@@ -444,6 +522,18 @@ def main():
         if output_path:
             print(f"\nOpen in browser: file://{output_path.absolute()}")
         return
+
+    # Sync feedback from Worker before any ranking
+    worker_url = os.getenv("ZOTERO_WORKER_URL")
+    feedback_key = os.getenv("FEEDBACK_API_KEY")
+    if worker_url and feedback_key:
+        try:
+            from src.feedback import sync_worker_feedback
+            count = sync_worker_feedback(db)
+            if count > 0:
+                print(f"Synced {count} feedback entries from Worker")
+        except Exception as e:
+            print(f"Warning: Could not sync Worker feedback: {e}")
 
     # Rank-only mode
     if args.rank_only:

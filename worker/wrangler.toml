@@ -2,9 +2,22 @@ name = "lit-monitor-zotero"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
+# KV Namespaces
+# Create with: wrangler kv namespace create FEEDBACK_KV
+# Then paste the binding ID below
+# [[kv_namespaces]]
+# binding = "FEEDBACK_KV"
+# id = "your-kv-namespace-id-here"
+
 # Environment variables (set via `wrangler secret put`)
 # ZOTERO_API_KEY - Your Zotero API key
 # ZOTERO_USER_ID - Your Zotero user ID (numeric)
+# SIGNING_SECRET - Secret for HMAC signatures
+# FEEDBACK_API_KEY - API key for feedback sync (shared with Pi's .env)
+
+# Optional secrets for Capacities integration:
+# CAPACITIES_API_TOKEN - Your Capacities API token
+# CAPACITIES_SPACE_ID - Your Capacities space ID
 
 # Optional: Use a custom domain
 # routes = [

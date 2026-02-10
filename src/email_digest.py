@@ -49,6 +49,42 @@ def generate_hmac_signature(data: str, timestamp: str, secret: str) -> str:
     return signature
 
 
+def generate_feedback_link(
+    paper: Paper,
+    action: str,
+    worker_url: Optional[str] = None,
+    signing_secret: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Generate a one-click feedback link (star or dismiss) with HMAC signature.
+
+    Args:
+        paper: Paper to generate link for.
+        action: 'star' or 'dismiss'.
+        worker_url: Cloudflare Worker URL.
+        signing_secret: Secret for HMAC signing.
+
+    Returns:
+        URL string or None if not configured.
+    """
+    if not worker_url or not signing_secret:
+        return None
+
+    # Encode minimal payload (just paper_id and title for confirmation)
+    metadata = {
+        "paper_id": paper.id,
+        "title": paper.title,
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(metadata).encode()
+    ).decode().rstrip('=')
+
+    timestamp = str(int(time.time() * 1000))
+    signature = generate_hmac_signature(encoded, timestamp, signing_secret)
+
+    return f"{worker_url}/feedback?data={encoded}&ts={timestamp}&sig={signature}&action={action}"
+
+
 def generate_zotero_link(
     paper: Paper,
     worker_url: Optional[str] = None,
@@ -493,12 +529,25 @@ def _render_paper(
 
     # Links
     zotero_link = generate_zotero_link(paper, worker_url, signing_secret)
+
+    # Feedback links
+    star_link = generate_feedback_link(paper, "star", worker_url, signing_secret)
+    dismiss_link = generate_feedback_link(paper, "dismiss", worker_url, signing_secret)
+
+    feedback_links = ""
+    if star_link and dismiss_link:
+        feedback_links = f"""
+                <span style="margin-left: 10px; padding-left: 10px; border-left: 1px solid #ddd;">
+                    <a href="{star_link}" target="_blank" style="color: #f39c12;">Star</a>
+                    <a href="{dismiss_link}" target="_blank" style="color: #95a5a6;">Dismiss</a>
+                </span>"""
+
     html += f"""
             <div class="paper-links">
                 <a href="{paper.url}" target="_blank">View Paper</a>
                 {f'<a href="{paper.full_text_url}" target="_blank">Full Text (PDF)</a>' if paper.full_text_url else ''}
                 {f'<a href="https://doi.org/{paper.doi}" target="_blank">DOI</a>' if paper.doi else ''}
-                <a href="{zotero_link}" target="_blank">Add to Zotero</a>
+                <a href="{zotero_link}" target="_blank">Add to Zotero</a>{feedback_links}
             </div>
         </div>
 """
@@ -783,15 +832,15 @@ def generate_and_save_digest(
     Returns:
         Path to the saved HTML file.
     """
-    # Get recent ranked papers
-    papers = db.get_recent_papers(days=days, min_score=min_score if min_score > 0 else None)
+    # Get papers not yet included in a prior digest
+    papers = db.get_papers_for_digest(days=days, min_score=min_score if min_score > 0 else None)
 
     # Filter to only ranked papers and sort by score
     ranked = [p for p in papers if p.relevance_score is not None]
     ranked.sort(key=lambda p: p.relevance_score or 0, reverse=True)
 
     if not ranked:
-        print(f"No ranked papers found in the last {days} days.")
+        print(f"No new ranked papers found in the last {days} days.")
         return None
 
     # Get worker URL and signing secret from environment
@@ -824,6 +873,10 @@ def generate_and_save_digest(
                 print("Failed to send email (check SMTP settings)")
         else:
             print("No recipient email configured (set EMAIL_TO)")
+
+    # Mark all papers as digested so they don't appear in future digests
+    db.mark_papers_digested([p.id for p in ranked])
+    print(f"Marked {len(ranked)} papers as digested (won't repeat in next digest)")
 
     # Optionally save to Capacities daily note
     if save_to_capacities:

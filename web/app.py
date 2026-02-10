@@ -168,6 +168,168 @@ def get_stats():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/papers')
+def papers():
+    """Paper feedback page."""
+    db = PaperDatabase(DATA_PATH)
+
+    # Get filter params
+    feedback_filter = request.args.get('filter', 'all')
+    days = int(request.args.get('days', 30))
+
+    # Get papers based on filter
+    if feedback_filter == 'starred':
+        paper_list = db.get_starred_papers(limit=200)
+    elif feedback_filter == 'dismissed':
+        paper_list = db.get_dismissed_papers(limit=200)
+    else:
+        paper_list = db.get_recent_papers(days=days)
+        if feedback_filter == 'none':
+            paper_list = [p for p in paper_list if p._user_feedback is None]
+
+    # Sort by relevance score (descending), unranked at end
+    paper_list.sort(key=lambda p: p.relevance_score if p.relevance_score is not None else -1, reverse=True)
+
+    stats = db.get_feedback_stats()
+
+    return render_template('papers.html',
+                         papers=paper_list,
+                         stats=stats,
+                         filter=feedback_filter,
+                         days=days)
+
+
+@app.route('/api/feedback', methods=['POST'])
+def set_feedback():
+    """Set feedback on a paper."""
+    try:
+        data = request.json
+        paper_id = data.get('paper_id')
+        feedback = data.get('feedback')  # 'star', 'dismiss', or None
+
+        if not paper_id:
+            return jsonify({'status': 'error', 'message': 'paper_id required'}), 400
+
+        if feedback and feedback not in ('star', 'dismiss'):
+            return jsonify({'status': 'error', 'message': 'feedback must be star, dismiss, or null'}), 400
+
+        db = PaperDatabase(DATA_PATH)
+        db.set_feedback(paper_id, feedback)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+@app.route('/seeds')
+def seeds():
+    """Seed papers page."""
+    db = PaperDatabase(DATA_PATH)
+    seed_list = db.get_seed_papers()
+    return render_template('seeds.html', seeds=seed_list)
+
+
+@app.route('/api/seeds/add', methods=['POST'])
+def add_seed():
+    """Add a seed paper by DOI or PMID."""
+    try:
+        data = request.json
+        identifier = data.get('identifier', '').strip()
+
+        if not identifier:
+            return jsonify({'status': 'error', 'message': 'identifier required'}), 400
+
+        from src.paper_lookup import lookup_paper
+        paper, source = lookup_paper(identifier)
+
+        if not paper:
+            return jsonify({'status': 'error', 'message': f'Could not find paper for: {identifier}'}), 404
+
+        db = PaperDatabase(DATA_PATH)
+        is_new = db.insert_seed_paper(paper, source=source)
+
+        return jsonify({
+            'status': 'ok',
+            'title': paper.title,
+            'is_new': is_new,
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+@app.route('/suggestions')
+def suggestions():
+    """Config suggestions page."""
+    db = PaperDatabase(DATA_PATH)
+    pending = db.get_pending_suggestions()
+    all_suggestions = db.get_all_suggestions()
+    resolved = [s for s in all_suggestions if s.status != 'pending']
+    return render_template('suggestions.html', pending=pending, resolved=resolved)
+
+
+@app.route('/api/suggestions/resolve', methods=['POST'])
+def resolve_suggestion():
+    """Accept or dismiss a config suggestion."""
+    try:
+        data = request.json
+        suggestion_id = data.get('id')
+        status = data.get('status')
+
+        if not suggestion_id or status not in ('accepted', 'dismissed'):
+            return jsonify({'status': 'error', 'message': 'id and status (accepted/dismissed) required'}), 400
+
+        db = PaperDatabase(DATA_PATH)
+
+        if status == 'accepted':
+            # Get the suggestion to auto-apply
+            suggestions = db.get_pending_suggestions()
+            suggestion = next((s for s in suggestions if s.id == suggestion_id), None)
+            if suggestion and suggestion.suggestion_data:
+                _apply_suggestion(suggestion)
+
+        db.resolve_suggestion(suggestion_id, status)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+def _apply_suggestion(suggestion):
+    """Auto-apply a suggestion to config.yaml."""
+    config = load_config_raw()
+    data = suggestion.suggestion_data
+
+    if suggestion.suggestion_type == 'search_query' and data.get('query'):
+        queries = config.get('search_queries', [])
+        if data['query'] not in queries:
+            queries.append(data['query'])
+            config['search_queries'] = queries
+
+    elif suggestion.suggestion_type == 'project_keyword' and data.get('project') and data.get('keyword'):
+        for project in config.get('active_projects', []):
+            if project.get('name') == data['project']:
+                keywords = project.get('keywords', [])
+                if data['keyword'] not in keywords:
+                    keywords.append(data['keyword'])
+                    project['keywords'] = keywords
+                break
+
+    elif suggestion.suggestion_type == 'watched_author' and data.get('author'):
+        authors = config.get('watched_authors', [])
+        if data['author'] not in authors:
+            authors.append(data['author'])
+            config['watched_authors'] = authors
+
+    elif suggestion.suggestion_type == 'new_project' and data.get('name'):
+        projects = config.get('active_projects', [])
+        if not any(p.get('name') == data['name'] for p in projects):
+            projects.append({
+                'name': data['name'],
+                'keywords': data.get('keywords', []),
+            })
+            config['active_projects'] = projects
+
+    save_config_raw(config)
+
+
 @app.route('/api/test-config')
 def test_config():
     """Test if current config is valid."""
@@ -186,5 +348,5 @@ def test_config():
 if __name__ == '__main__':
     print(f"Config file: {CONFIG_PATH}")
     print(f"Database: {DATA_PATH}")
-    print(f"\nStarting web UI at http://localhost:5000")
+    print(f"\nStarting web UI at http://127.0.0.1:5000")
     app.run(debug=True, port=5000)

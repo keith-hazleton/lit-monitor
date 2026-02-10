@@ -1,10 +1,13 @@
 /**
- * Cloudflare Worker for one-click Zotero paper import + Capacities integration
+ * Cloudflare Worker for one-click Zotero paper import + Capacities integration + Feedback
  *
  * Uses HMAC-signed URLs to prevent unauthorized requests.
  *
  * Endpoints:
  *   GET /add?data=<base64>&ts=<timestamp>&sig=<signature> - Add paper to Zotero & Capacities
+ *   GET /feedback?data=<base64>&ts=<timestamp>&sig=<signature>&action=star|dismiss - Record feedback
+ *   GET /feedback/pending?key=<api_key> - Get pending feedback entries (Pi polls this)
+ *   POST /feedback/ack - Acknowledge processed feedback entries
  *   GET /health - Health check
  *
  * Required secrets (set via `wrangler secret put`):
@@ -12,9 +15,13 @@
  *   ZOTERO_USER_ID - Your Zotero user ID
  *   SIGNING_SECRET - Secret for HMAC signatures (generate with: openssl rand -hex 32)
  *
- * Optional secrets for Capacities integration:
+ * Optional secrets:
  *   CAPACITIES_API_TOKEN - Your Capacities API token
  *   CAPACITIES_SPACE_ID - Your Capacities space ID
+ *   FEEDBACK_API_KEY - API key for feedback sync (shared with Pi's .env)
+ *
+ * KV Namespaces:
+ *   FEEDBACK_KV - Stores pending feedback entries
  */
 
 const ZOTERO_API_BASE = 'https://api.zotero.org';
@@ -45,6 +52,18 @@ export default {
 
       if (path === '/add') {
         return await handleAddPaper(url, env, corsHeaders);
+      }
+
+      if (path === '/feedback' && request.method === 'GET') {
+        return await handleFeedback(url, env, corsHeaders);
+      }
+
+      if (path === '/feedback/pending' && request.method === 'GET') {
+        return await handleFeedbackPending(url, env, corsHeaders);
+      }
+
+      if (path === '/feedback/ack' && request.method === 'POST') {
+        return await handleFeedbackAck(request, env, corsHeaders);
       }
 
       // Default: show usage info
@@ -316,6 +335,168 @@ function buildCapacitiesMarkdown(paper) {
   }
 
   return md;
+}
+
+/**
+ * Handle feedback (star/dismiss) from email links
+ */
+async function handleFeedback(url, env, corsHeaders) {
+  if (!env.SIGNING_SECRET) {
+    throw new Error('Signing secret not configured');
+  }
+
+  const encodedData = url.searchParams.get('data');
+  const timestamp = url.searchParams.get('ts');
+  const signature = url.searchParams.get('sig');
+  const action = url.searchParams.get('action');
+
+  if (!encodedData || !timestamp || !signature || !action) {
+    throw new Error('Missing required parameters');
+  }
+
+  if (action !== 'star' && action !== 'dismiss') {
+    throw new Error('Invalid action. Must be "star" or "dismiss".');
+  }
+
+  // Verify timestamp
+  const ts = parseInt(timestamp, 10);
+  const now = Date.now();
+  const age = now - ts;
+  const maxAge = URL_EXPIRY_HOURS * 60 * 60 * 1000;
+
+  if (isNaN(ts) || age < 0 || age > maxAge) {
+    throw new Error('Link has expired. Please generate a new digest.');
+  }
+
+  // Verify HMAC signature
+  const expectedSig = await generateSignature(encodedData, timestamp, env.SIGNING_SECRET);
+  if (signature !== expectedSig) {
+    throw new Error('Invalid signature.');
+  }
+
+  // Decode paper data
+  let paperData;
+  try {
+    const decoded = atob(encodedData.replace(/-/g, '+').replace(/_/g, '/'));
+    paperData = JSON.parse(decoded);
+  } catch (e) {
+    throw new Error('Invalid data encoding');
+  }
+
+  const paperId = paperData.paper_id;
+  const paperTitle = paperData.title || 'Unknown';
+
+  if (!paperId) {
+    throw new Error('Missing paper_id in data');
+  }
+
+  // Store in KV (if available)
+  if (env.FEEDBACK_KV) {
+    const kvKey = `feedback:${paperId}:${Date.now()}`;
+    await env.FEEDBACK_KV.put(kvKey, JSON.stringify({
+      paper_id: paperId,
+      action: action,
+      timestamp: Date.now(),
+      title: paperTitle,
+    }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30 day TTL
+  }
+
+  return htmlResponse(renderFeedbackSuccessPage(paperTitle, action), corsHeaders);
+}
+
+/**
+ * Return pending feedback entries for the Pi to sync
+ */
+async function handleFeedbackPending(url, env, corsHeaders) {
+  // Authenticate with API key
+  const apiKey = url.searchParams.get('key');
+  if (!env.FEEDBACK_API_KEY || apiKey !== env.FEEDBACK_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, corsHeaders, 401);
+  }
+
+  if (!env.FEEDBACK_KV) {
+    return jsonResponse({ entries: [] }, corsHeaders);
+  }
+
+  // List all feedback keys
+  const list = await env.FEEDBACK_KV.list({ prefix: 'feedback:' });
+  const entries = [];
+
+  for (const key of list.keys) {
+    const value = await env.FEEDBACK_KV.get(key.name);
+    if (value) {
+      try {
+        const entry = JSON.parse(value);
+        entry.key = key.name;
+        entries.push(entry);
+      } catch (e) {
+        // Skip malformed entries
+      }
+    }
+  }
+
+  return jsonResponse({ entries }, corsHeaders);
+}
+
+/**
+ * Acknowledge (delete) processed feedback entries
+ */
+async function handleFeedbackAck(request, env, corsHeaders) {
+  const body = await request.json();
+
+  // Authenticate
+  if (!env.FEEDBACK_API_KEY || body.key !== env.FEEDBACK_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, corsHeaders, 401);
+  }
+
+  if (!env.FEEDBACK_KV) {
+    return jsonResponse({ status: 'ok', deleted: 0 }, corsHeaders);
+  }
+
+  const keys = body.keys || [];
+  let deleted = 0;
+
+  for (const key of keys) {
+    try {
+      await env.FEEDBACK_KV.delete(key);
+      deleted++;
+    } catch (e) {
+      // Ignore delete errors
+    }
+  }
+
+  return jsonResponse({ status: 'ok', deleted }, corsHeaders);
+}
+
+function renderFeedbackSuccessPage(title, action) {
+  const emoji = action === 'star' ? '⭐' : '👋';
+  const verb = action === 'star' ? 'Starred' : 'Dismissed';
+  const message = action === 'star'
+    ? 'This paper will be used to improve future rankings.'
+    : 'This paper will be deprioritized in future rankings.';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${verb} Paper</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+    .icon { font-size: 64px; margin-bottom: 10px; }
+    h1 { color: #2c3e50; margin-top: 0; }
+    .title { color: #666; font-style: italic; margin: 20px; padding: 15px; background: #f8f8f8; border-radius: 6px; }
+    .message { color: #555; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <div class="icon">${emoji}</div>
+  <h1>${verb}!</h1>
+  <p class="title">${escapeHtml(title)}</p>
+  <p class="message">${message}</p>
+  <p><small>You can close this tab.</small></p>
+</body>
+</html>`;
 }
 
 // Helper functions

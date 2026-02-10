@@ -13,18 +13,36 @@ Both repositories contain the same core functionality - the only difference is t
 When making changes to core functionality, the same changes should be applied to both repositories. This includes:
 
 ### Files that should stay in sync:
-- `src/` - All source code (database, ranker, sources, email_digest, config_loader)
-- `web/` - Flask web UI
-- `worker/` - Cloudflare Worker for Zotero integration
+- `src/` - All source code:
+  - `database.py` - SQLite database layer (schema, feedback, seed papers, config suggestions, digest dedup)
+  - `ranker.py` - Claude AI ranking with feedback-informed prompts
+  - `email_digest.py` - HTML digest generator with star/dismiss feedback links
+  - `feedback.py` - Feedback prompt builder and Worker feedback sync
+  - `paper_lookup.py` - DOI/PMID lookup for seed paper import
+  - `config_suggester.py` - AI-powered config improvement suggestions
+  - `zotero_sync.py` - Zotero library sync for seed papers
+  - `config_loader.py` - YAML config parser
+  - `sources/pubmed.py` - PubMed E-utilities client
+  - `sources/biorxiv.py` - bioRxiv API client
+- `web/` - Flask web UI:
+  - `app.py` - Routes for config, papers, seeds, suggestions (note: `__main__` block differs between repos)
+  - `templates/index.html` - Config editor with nav bar
+  - `templates/papers.html` - Paper list with star/dismiss feedback
+  - `templates/seeds.html` - Seed paper import via DOI/PMID
+  - `templates/suggestions.html` - Config suggestion review
+  - `static/style.css` - Shared styles
+- `worker/` - Cloudflare Worker for Zotero + feedback integration
 - `config/config.yaml` structure (not the actual search terms)
 - `requirements.txt`
 - `.env.example`
+- `main.py` - CLI entry point (note: `--web` flag behavior may differ)
 
 ### Files that are intentionally different:
 - `README.md` - Different setup instructions for each platform
 - `.github/workflows/` - Only exists in lit-monitor (GitHub Actions)
 - `run_weekly.sh` - Only exists in lit-monitor-pi (cron wrapper)
 - `logs/` directory - Only exists in lit-monitor-pi
+- `web/app.py` `__main__` block - Pi version binds to `0.0.0.0` with network IP display; GitHub Actions version uses `127.0.0.1`
 
 ## Workflow
 

@@ -30,6 +30,7 @@ class PaperRanker:
         config: Config,
         api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-20250514",
+        db=None,
     ):
         """
         Initialize the ranker.
@@ -38,10 +39,20 @@ class PaperRanker:
             config: Application config with projects and research context.
             api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var).
             model: Claude model to use.
+            db: Optional PaperDatabase for feedback-informed ranking.
         """
         self.config = config
         self.model = model
         self.client = anthropic.Anthropic(api_key=api_key or os.getenv("ANTHROPIC_API_KEY"))
+
+        # Build feedback section once at init
+        self._feedback_section = None
+        if db:
+            try:
+                from .feedback import build_feedback_prompt_section
+                self._feedback_section = build_feedback_prompt_section(db)
+            except Exception:
+                pass
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with research context."""
@@ -50,7 +61,7 @@ class PaperRanker:
             for p in self.config.active_projects
         )
 
-        return f"""You are a research assistant helping a pediatric hepatology researcher stay current with the literature. Your task is to evaluate papers for relevance and provide concise summaries.
+        prompt = f"""You are a research assistant helping a pediatric hepatology researcher stay current with the literature. Your task is to evaluate papers for relevance and provide concise summaries.
 
 The researcher's active projects are:
 {projects_text}
@@ -65,9 +76,14 @@ When evaluating papers:
 1. Consider direct relevance to active projects
 2. Consider methodological advances that could apply to their research
 3. Consider findings that challenge or support current understanding
-4. Papers from watched authors or high-impact journals may warrant slightly higher scores
+4. Papers from watched authors or high-impact journals may warrant slightly higher scores"""
 
-Respond in JSON format only."""
+        if self._feedback_section:
+            prompt += "\n" + self._feedback_section
+
+        prompt += "\n\nRespond in JSON format only."
+
+        return prompt
 
     def _build_user_prompt(self, paper: Paper) -> str:
         """Build the user prompt for a single paper."""
@@ -248,7 +264,7 @@ def rank_and_update_db(
         print("No papers to rank.")
         return []
 
-    ranker = PaperRanker(config)
+    ranker = PaperRanker(config, db=db)
 
     def progress_callback(paper, result, index, total):
         if verbose:

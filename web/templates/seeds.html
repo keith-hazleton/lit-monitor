@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Literature Monitor - Seed Papers</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">Config</a>
+            <a href="/papers" class="nav-link">Papers</a>
+            <a href="/seeds" class="nav-link active">Seeds</a>
+            <a href="/suggestions" class="nav-link">Suggestions</a>
+        </nav>
+
+        <header>
+            <h1>Literature Monitor</h1>
+            <p class="subtitle">Seed Papers</p>
+        </header>
+
+        <!-- Add Seed -->
+        <section class="card">
+            <h2>Add Seed Paper</h2>
+            <p class="description">Enter a DOI or PubMed ID to teach the system about papers you find valuable. Seed papers are automatically starred.</p>
+            <div class="seed-input-group">
+                <input type="text" id="seed-identifier" placeholder="DOI (e.g., 10.1234/...) or PMID (e.g., 12345678)">
+                <button onclick="addSeed()" class="btn btn-primary" id="add-seed-btn">Add Seed</button>
+            </div>
+            <div id="seed-result"></div>
+        </section>
+
+        <!-- Seed Papers List -->
+        <section class="card">
+            <h2>Seed Papers ({{ seeds|length }})</h2>
+            {% if seeds %}
+                {% for paper in seeds %}
+                <div class="paper-card starred" id="seed-{{ paper.id }}">
+                    <div class="paper-title">
+                        <a href="{{ paper.url }}" target="_blank">{{ paper.title }}</a>
+                        <span class="seed-badge">SEED</span>
+                        {% if paper._seed_source %}
+                        <span class="seed-badge" style="background-color: var(--primary);">{{ paper._seed_source }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="paper-meta">
+                        {{ paper.authors[:3]|join(', ') }}{% if paper.authors|length > 3 %} et al.{% endif %}<br>
+                        <span class="journal">{{ paper.journal }}</span> &middot; {{ paper.pub_date }}
+                        {% if paper.doi %} &middot; DOI: {{ paper.doi }}{% endif %}
+                    </div>
+                    {% if paper.abstract %}
+                    <div class="paper-summary">{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <p>No seed papers yet.</p>
+                    <p>Add papers by DOI or PMID above, or use <code>python main.py --add-seed &lt;DOI_or_PMID&gt;</code></p>
+                </div>
+            {% endif %}
+        </section>
+
+        <footer>
+            <p>Seed papers train the ranking system on your interests.</p>
+        </footer>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        async function addSeed() {
+            const input = document.getElementById('seed-identifier');
+            const btn = document.getElementById('add-seed-btn');
+            const result = document.getElementById('seed-result');
+            const identifier = input.value.trim();
+
+            if (!identifier) {
+                showToast('Please enter a DOI or PMID', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Looking up...';
+            result.innerHTML = '<span style="color: var(--gray-600);">Fetching paper metadata...</span>';
+
+            try {
+                const response = await fetch('/api/seeds/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ identifier })
+                });
+                const data = await response.json();
+
+                if (data.status === 'ok') {
+                    result.innerHTML = `<span class="success">Added: ${data.title}</span>`;
+                    showToast('Seed paper added!');
+                    input.value = '';
+                    // Reload after a brief delay to show the new seed
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    result.innerHTML = `<span class="error">Error: ${data.message}</span>`;
+                    showToast(data.message, 'error');
+                }
+            } catch (e) {
+                result.innerHTML = `<span class="error">Error: ${e.message}</span>`;
+                showToast('Error: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Add Seed';
+            }
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('seed-identifier').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') addSeed();
+        });
+    </script>
+</body>
+</html>
