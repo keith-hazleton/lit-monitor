@@ -381,7 +381,7 @@ class PaperDatabase:
         from datetime import timedelta
         since = (datetime.now() - timedelta(days=days)).isoformat()
 
-        query = "SELECT * FROM papers WHERE first_seen_date >= ? AND last_digest_date IS NULL"
+        query = "SELECT * FROM papers WHERE first_seen_date >= ? AND last_digest_date IS NULL AND (is_seed IS NULL OR is_seed = FALSE)"
         params: list = [since]
 
         if min_score is not None:
