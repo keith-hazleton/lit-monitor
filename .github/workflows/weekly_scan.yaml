@@ -1,7 +1,12 @@
 name: Weekly Literature Scan
 
+# NOTE: Scheduled runs are currently not working (GitHub Actions disables
+# scheduled workflows on repos with no recent activity). Use the manual
+# "Run workflow" button in the Actions tab, or run locally with main.py.
+
 on:
   # Run every Monday at 8am UTC (adjust to your timezone)
+  # Currently non-functional — see note above
   schedule:
     - cron: '0 8 * * 1'
 
@@ -64,17 +69,7 @@ jobs:
           echo "Ranking papers with Claude..."
           python main.py --rank-only --rank-limit 50
 
-      - name: Generate digest
-        env:
-          ZOTERO_WORKER_URL: ${{ secrets.ZOTERO_WORKER_URL }}
-          SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
-        run: |
-          DAYS=${{ github.event.inputs.days || '7' }}
-          echo "Generating digest..."
-          python main.py --digest --days $DAYS
-
-      - name: Send email digest
-        if: ${{ github.event.inputs.send_email != 'false' }}
+      - name: Generate digest and send email
         env:
           ZOTERO_WORKER_URL: ${{ secrets.ZOTERO_WORKER_URL }}
           SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
@@ -86,7 +81,12 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           DAYS=${{ github.event.inputs.days || '7' }}
-          python main.py --digest --days $DAYS --send-email
+          SEND_FLAG=""
+          if [ "${{ github.event.inputs.send_email }}" != "false" ]; then
+            SEND_FLAG="--send-email"
+          fi
+          echo "Generating digest..."
+          python main.py --digest --days $DAYS $SEND_FLAG
         continue-on-error: true
 
       - name: Upload database artifact

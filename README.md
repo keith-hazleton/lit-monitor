@@ -162,7 +162,9 @@ ZOTERO_WORKER_URL=https://lit-monitor-zotero.YOUR-SUBDOMAIN.workers.dev
 
 **Important**: The `SIGNING_SECRET` and `FEEDBACK_API_KEY` must be identical in your `.env`, GitHub Secrets, and Cloudflare Worker.
 
-## GitHub Actions Setup (Automated Weekly Runs)
+## GitHub Actions Setup
+
+> **Note**: GitHub Actions disables scheduled workflows on repositories with no recent activity. You may need to trigger runs manually from the Actions tab.
 
 ### 1. Add Repository Secrets
 
@@ -170,11 +172,13 @@ Go to your repository: **Settings → Secrets and variables → Actions → New 
 
 Add all the environment variables from your `.env` file as secrets.
 
-### 2. Enable the Workflow
+### 2. Run the Workflow
 
-The workflow runs automatically every Monday at 8am UTC. You can also trigger it manually:
+Trigger manually from the Actions tab:
 
 **Actions → Weekly Literature Scan → Run workflow**
+
+The workflow also has a weekly schedule (Monday 8am UTC), but GitHub may disable it if the repository has been inactive. Re-enable it by pushing a commit or triggering a manual run.
 
 ### 3. Access Results
 
@@ -279,7 +283,7 @@ The `SIGNING_SECRET` must match in all three places:
 Add an `NCBI_API_KEY` to increase rate limits from 3 to 10 requests/second.
 
 ### Email not sending
-For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833) instead of your regular password.
+For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833) instead of your regular password. For iCloud custom domain, use `smtp.mail.me.com` as the SMTP host and generate an app-specific password at [appleid.apple.com](https://appleid.apple.com).
 
 ### Flask UI shows blank page
 Use `http://127.0.0.1:5000` instead of `http://localhost:5000` (IPv4 vs IPv6 issue).
