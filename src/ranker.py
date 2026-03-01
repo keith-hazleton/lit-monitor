@@ -29,7 +29,7 @@ class PaperRanker:
         self,
         config: Config,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-5-20250514",
         db=None,
     ):
         """

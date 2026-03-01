@@ -44,7 +44,7 @@ def generate_suggestions(config: Config, db: PaperDatabase) -> list[dict]:
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5-20250514",
         max_tokens=2048,
         system="You are an expert at optimizing literature search configurations for researchers. Analyze the provided feedback and suggest improvements. Respond ONLY with valid JSON.",
         messages=[{"role": "user", "content": prompt}],
